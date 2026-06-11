@@ -48,14 +48,26 @@ jobs:
             cpio \
             xz-utils \
             u-boot-tools
+          
+          echo "=== Build tools installed ==="
+          echo "gcc: $(gcc --version | head -1)"
+          echo "git: $(git --version)"
+          echo "xz: $(xz --version | head -1)"
 
       - name: Clone Armbian repository
         run: |
           mkdir -p /tmp/build
           cd /tmp/build
+          
+          echo "=== Available disk space ==="
+          df -h /tmp
+          
           git clone --depth=1 https://github.com/armbian/build.git armbian
           cd armbian
           git checkout main
+          
+          echo "=== Armbian ready ==="
+          ls -la compile.sh
 
       - name: Prepare build directory
         run: |
@@ -63,6 +75,16 @@ jobs:
           mkdir -p userpatches/overlay
           mkdir -p cache/sources
           mkdir -p cache/debs
+          
+          echo "=== Disk space check ==="
+          df -h /tmp
+          AVAILABLE=$(df /tmp | awk 'NR==2 {print $4}')
+          AVAILABLE_GB=$((AVAILABLE / 1024 / 1024))
+          echo "Available in /tmp: ${AVAILABLE_GB}GB"
+          
+          if [ $AVAILABLE_GB -lt 20 ]; then
+            echo "WARNING: Low disk space (< 20GB available)"
+          fi
 
       - name: Copy branding overlay
         run: |
@@ -86,23 +108,75 @@ jobs:
             COMPRESS_OUTPUTIMAGE=xz \
             ARTIFACT_IGNORE_CACHE=yes \
             2>&1 | tee build.log
+          
+          BUILD_EXIT=$?
+          if [ $BUILD_EXIT -ne 0 ]; then
+            echo "Armbian build failed with exit code $BUILD_EXIT"
+            echo ""
+            echo "=== Last 50 lines of build log ==="
+            tail -50 build.log
+            exit 1
+          fi
 
       - name: Locate built image
         id: image
         run: |
-          IMAGE_PATH=$(find /tmp/build/armbian/output/images -name "*.img.xz" -type f | head -1)
+          echo "Searching for image files in output directory..."
+          
+          # Search for image files in multiple possible locations
+          for dir in /tmp/build/armbian/output/images /tmp/build/armbian/output /tmp/build/armbian; do
+            if [ -d "$dir" ]; then
+              echo "Checking: $dir"
+              find "$dir" -maxdepth 2 -type f \( -name "*.img*" -o -name "*.xz" \) 2>/dev/null | head -10
+            fi
+          done
+          
+          # Try to find .img.xz first
+          IMAGE_PATH=$(find /tmp/build/armbian -name "*.img.xz" -type f 2>/dev/null | head -1)
+          
+          # If not found, look for uncompressed .img and we'll compress it
           if [ -z "$IMAGE_PATH" ]; then
-            echo "No image found in output/images"
+            IMAGE_PATH=$(find /tmp/build/armbian -name "*.img" -type f 2>/dev/null | head -1)
+            NEEDS_COMPRESSION=true
+          fi
+          
+          if [ -z "$IMAGE_PATH" ]; then
+            echo "ERROR: No image found (.img or .img.xz)"
+            echo ""
+            echo "=== Contents of /tmp/build/armbian/output ==="
+            ls -laR /tmp/build/armbian/output/ 2>/dev/null || echo "Directory not found"
             exit 1
           fi
+          
+          echo "Found image: $IMAGE_PATH"
           echo "image_path=$IMAGE_PATH" >> $GITHUB_OUTPUT
-          echo "image_name=$(basename $IMAGE_PATH)" >> $GITHUB_OUTPUT
+          echo "needs_compression=${NEEDS_COMPRESSION:-false}" >> $GITHUB_OUTPUT
+
+      - name: Compress image if needed
+        run: |
+          IMAGE_PATH="${{ steps.image.outputs.image_path }}"
+          NEEDS_COMPRESSION="${{ steps.image.outputs.needs_compression }}"
+          
+          if [ "$NEEDS_COMPRESSION" = "true" ]; then
+            echo "Compressing image with xz..."
+            xz -v "$IMAGE_PATH"
+            IMAGE_PATH="${IMAGE_PATH}.xz"
+            echo "IMAGE_PATH=$IMAGE_PATH" >> $GITHUB_ENV
+          else
+            echo "IMAGE_PATH=$IMAGE_PATH" >> $GITHUB_ENV
+          fi
 
       - name: Rename artifact
         run: |
-          SOURCE="${{ steps.image.outputs.image_path }}"
+          SOURCE="${{ env.IMAGE_PATH }}"
           DEST="/tmp/build/AVVaultOS-X96Q-H313-trixie-minimal.img.xz"
-          mv "$SOURCE" "$DEST"
+          
+          if [ ! -f "$SOURCE" ]; then
+            echo "ERROR: Source file not found: $SOURCE"
+            exit 1
+          fi
+          
+          cp "$SOURCE" "$DEST"
           echo "ARTIFACT_PATH=$DEST" >> $GITHUB_ENV
 
       - name: Verify image size
