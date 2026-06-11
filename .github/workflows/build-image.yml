@@ -9,30 +9,30 @@ on:
       - 'build/**'
       - 'scripts/**'
       - '.github/workflows/build-image.yml'
+
   workflow_dispatch:
-    inputs:
-      upload_artifacts:
-        description: 'Upload build artifacts'
-        required: false
-        default: 'true'
 
 env:
+  BUILD_ROOT: /tmp/build
+  ARMBIAN_DIR: /tmp/build/armbian
+
   BOARD: x96q
+  BRANCH: current
   RELEASE: trixie
+
   BUILD_MINIMAL: "yes"
   BUILD_DESKTOP: "no"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up build environment
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -47,178 +47,137 @@ jobs:
             device-tree-compiler \
             cpio \
             xz-utils \
-            u-boot-tools
-          
-          echo "=== Build tools installed ==="
-          echo "gcc: $(gcc --version | head -1)"
-          echo "git: $(git --version)"
-          echo "xz: $(xz --version | head -1)"
+            u-boot-tools \
+            qemu-user-static \
+            binfmt-support
 
-      - name: Clone Armbian repository
+      - name: Clone Armbian
         run: |
-          mkdir -p /tmp/build
-          cd /tmp/build
-          
-          echo "=== Available disk space ==="
-          df -h /tmp
-          
-          git clone --depth=1 https://github.com/armbian/build.git armbian
-          cd armbian
-          git checkout main
-          
-          echo "=== Armbian ready ==="
-          ls -la compile.sh
+          mkdir -p "$BUILD_ROOT"
+          cd "$BUILD_ROOT"
 
-      - name: Prepare build directory
+          git clone \
+            --depth=1 \
+            https://github.com/armbian/build.git \
+            armbian
+
+      - name: Verify board support
         run: |
-          cd /tmp/build/armbian
-          mkdir -p userpatches/overlay
-          mkdir -p cache/sources
-          mkdir -p cache/debs
-          
-          echo "=== Disk space check ==="
-          df -h /tmp
-          AVAILABLE=$(df /tmp | awk 'NR==2 {print $4}')
-          AVAILABLE_GB=$((AVAILABLE / 1024 / 1024))
-          echo "Available in /tmp: ${AVAILABLE_GB}GB"
-          
-          if [ $AVAILABLE_GB -lt 20 ]; then
-            echo "WARNING: Low disk space (< 20GB available)"
+          cd "$ARMBIAN_DIR"
+
+          echo "Checking board definitions..."
+
+          find config/boards -type f | grep -i x96 || true
+
+      - name: Prepare directories
+        run: |
+          mkdir -p "$ARMBIAN_DIR/userpatches/overlay"
+          mkdir -p "$ARMBIAN_DIR/cache/sources"
+          mkdir -p "$ARMBIAN_DIR/cache/debs"
+
+      - name: Copy branding
+        run: |
+          if [ -d "${{ github.workspace }}/branding/rootfs" ]; then
+            cp -r \
+              "${{ github.workspace }}/branding/rootfs/." \
+              "$ARMBIAN_DIR/userpatches/overlay/"
           fi
 
-      - name: Copy branding overlay
-        run: |
-          cp -r ${{ github.workspace }}/branding/rootfs/* /tmp/build/armbian/userpatches/overlay/
-
-      - name: Copy custom kernel config (if exists)
+      - name: Copy kernel config
         run: |
           if [ -f "${{ github.workspace }}/build/config/kernel-config" ]; then
-            cp ${{ github.workspace }}/build/config/kernel-config /tmp/build/armbian/userpatches/
+            cp \
+              "${{ github.workspace }}/build/config/kernel-config" \
+              "$ARMBIAN_DIR/userpatches/"
           fi
 
-      - name: Run Armbian build
+      - name: Build image
         run: |
-          cd /tmp/build/armbian
-          ./compile.sh \
-            BOARD=${{ env.BOARD }} \
-            RELEASE=${{ env.RELEASE }} \
-            BUILD_MINIMAL=${{ env.BUILD_MINIMAL }} \
-            BUILD_DESKTOP=${{ env.BUILD_DESKTOP }} \
+          cd "$ARMBIAN_DIR"
+
+          ./compile.sh build \
+            BOARD=${BOARD} \
+            BRANCH=${BRANCH} \
+            RELEASE=${RELEASE} \
+            BUILD_MINIMAL=${BUILD_MINIMAL} \
+            BUILD_DESKTOP=${BUILD_DESKTOP} \
             KERNEL_CONFIGURE=no \
             COMPRESS_OUTPUTIMAGE=xz \
             ARTIFACT_IGNORE_CACHE=yes \
+            SHARE_LOG=yes \
             2>&1 | tee build.log
-          
-          BUILD_EXIT=$?
-          if [ $BUILD_EXIT -ne 0 ]; then
-            echo "Armbian build failed with exit code $BUILD_EXIT"
-            echo ""
-            echo "=== Last 50 lines of build log ==="
-            tail -50 build.log
-            exit 1
-          fi
 
-      - name: Locate built image
+      - name: Show output directory
+        if: always()
+        run: |
+          echo "=== OUTPUT FILES ==="
+
+          find "$ARMBIAN_DIR/output" \
+            -type f \
+            | sort || true
+
+      - name: Locate image
         id: image
         run: |
-          echo "Searching for image files in output directory..."
-          
-          # Search for image files in multiple possible locations
-          for dir in /tmp/build/armbian/output/images /tmp/build/armbian/output /tmp/build/armbian; do
-            if [ -d "$dir" ]; then
-              echo "Checking: $dir"
-              find "$dir" -maxdepth 2 -type f \( -name "*.img*" -o -name "*.xz" \) 2>/dev/null | head -10
-            fi
-          done
-          
-          # Try to find .img.xz first
-          IMAGE_PATH=$(find /tmp/build/armbian -name "*.img.xz" -type f 2>/dev/null | head -1)
-          
-          # If not found, look for uncompressed .img and we'll compress it
+          IMAGE_PATH=$(find "$ARMBIAN_DIR/output" \
+            -name "*.img.xz" \
+            -type f \
+            | head -1)
+
           if [ -z "$IMAGE_PATH" ]; then
-            IMAGE_PATH=$(find /tmp/build/armbian -name "*.img" -type f 2>/dev/null | head -1)
-            NEEDS_COMPRESSION=true
-          fi
-          
-          if [ -z "$IMAGE_PATH" ]; then
-            echo "ERROR: No image found (.img or .img.xz)"
+            echo "ERROR: No image produced"
+
             echo ""
-            echo "=== Contents of /tmp/build/armbian/output ==="
-            ls -laR /tmp/build/armbian/output/ 2>/dev/null || echo "Directory not found"
+            echo "=== BUILD LOG TAIL ==="
+
+            tail -100 "$ARMBIAN_DIR/build.log" || true
+
             exit 1
           fi
-          
-          echo "Found image: $IMAGE_PATH"
-          echo "image_path=$IMAGE_PATH" >> $GITHUB_OUTPUT
-          echo "needs_compression=${NEEDS_COMPRESSION:-false}" >> $GITHUB_OUTPUT
 
-      - name: Compress image if needed
+          echo "image_path=$IMAGE_PATH" >> "$GITHUB_OUTPUT"
+          echo "image_name=$(basename "$IMAGE_PATH")" >> "$GITHUB_OUTPUT"
+
+      - name: Rename image
         run: |
-          IMAGE_PATH="${{ steps.image.outputs.image_path }}"
-          NEEDS_COMPRESSION="${{ steps.image.outputs.needs_compression }}"
-          
-          if [ "$NEEDS_COMPRESSION" = "true" ]; then
-            echo "Compressing image with xz..."
-            xz -v "$IMAGE_PATH"
-            IMAGE_PATH="${IMAGE_PATH}.xz"
-            echo "IMAGE_PATH=$IMAGE_PATH" >> $GITHUB_ENV
-          else
-            echo "IMAGE_PATH=$IMAGE_PATH" >> $GITHUB_ENV
-          fi
+          DEST="$BUILD_ROOT/AVVaultOS-X96Q-H313-trixie-minimal.img.xz"
 
-      - name: Rename artifact
+          mv \
+            "${{ steps.image.outputs.image_path }}" \
+            "$DEST"
+
+          echo "ARTIFACT_PATH=$DEST" >> "$GITHUB_ENV"
+
+      - name: Verify image
         run: |
-          SOURCE="${{ env.IMAGE_PATH }}"
-          DEST="/tmp/build/AVVaultOS-X96Q-H313-trixie-minimal.img.xz"
-          
-          if [ ! -f "$SOURCE" ]; then
-            echo "ERROR: Source file not found: $SOURCE"
-            exit 1
-          fi
-          
-          cp "$SOURCE" "$DEST"
-          echo "ARTIFACT_PATH=$DEST" >> $GITHUB_ENV
+          ls -lh "$ARTIFACT_PATH"
 
-      - name: Verify image size
-        run: |
-          ls -lh "${{ env.ARTIFACT_PATH }}"
-          FILE_SIZE=$(stat -f%z "${{ env.ARTIFACT_PATH }}" 2>/dev/null || stat -c%s "${{ env.ARTIFACT_PATH }}")
-          echo "Image size: $((FILE_SIZE / 1024 / 1024 / 1024)) GB"
-
-      - name: Upload to GitHub Release
-        if: github.event_name == 'push' || github.event.inputs.upload_artifacts == 'true'
-        uses: softprops/action-gh-release@v1
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: ${{ env.ARTIFACT_PATH }}
+          name: AVVaultOS-X96Q-H313
+          path: ${{ env.ARTIFACT_PATH }}
+
+      - name: Create Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
           tag_name: build-${{ github.run_number }}
-          body: |
-            **AV Vault OS Build ${{ github.run_number }}**
-            
-            Board: x96q (Allwinner H313)
-            Release: Debian Trixie
-            Type: Minimal/Headless
-            
-            Commit: ${{ github.sha }}
-            
-            **Image Details:**
-            - Hostname: av-vault
-            - SSH: Enabled
-            - Branding: Applied
-            - Storage tools included
+          files: ${{ env.ARTIFACT_PATH }}
+          prerelease: true
           draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build summary
         if: always()
         run: |
-          echo "=== Build Summary ==="
-          echo "Board: ${{ env.BOARD }}"
-          echo "Release: ${{ env.RELEASE }}"
-          echo "Build Type: Minimal"
-          if [ -f "/tmp/build/armbian/build.log" ]; then
+          echo "BOARD=$BOARD"
+          echo "BRANCH=$BRANCH"
+          echo "RELEASE=$RELEASE"
+
+          if [ -f "$ARMBIAN_DIR/build.log" ]; then
             echo ""
-            echo "=== Build Log (last 50 lines) ==="
-            tail -50 /tmp/build/armbian/build.log
+            echo "=== LAST 100 LOG LINES ==="
+            tail -100 "$ARMBIAN_DIR/build.log"
           fi
