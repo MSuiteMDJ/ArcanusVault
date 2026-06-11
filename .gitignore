@@ -1,0 +1,6 @@
+.DS_Store
+*.img
+*.img.xz
+build/
+dist/
+mount/

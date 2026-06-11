@@ -1,0 +1,150 @@
+name: Build AV Vault OS Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'branding/**'
+      - 'build/**'
+      - 'scripts/**'
+      - '.github/workflows/build-image.yml'
+  workflow_dispatch:
+    inputs:
+      upload_artifacts:
+        description: 'Upload build artifacts'
+        required: false
+        default: 'true'
+
+env:
+  BOARD: x96q
+  RELEASE: trixie
+  BUILD_MINIMAL: "yes"
+  BUILD_DESKTOP: "no"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            wget \
+            bc \
+            libncurses5-dev \
+            libssl-dev \
+            bison \
+            flex \
+            device-tree-compiler \
+            cpio \
+            xz-utils \
+            u-boot-tools
+
+      - name: Clone Armbian repository
+        run: |
+          mkdir -p /tmp/build
+          cd /tmp/build
+          git clone --depth=1 https://github.com/armbian/build.git armbian
+          cd armbian
+          git checkout main
+
+      - name: Prepare build directory
+        run: |
+          cd /tmp/build/armbian
+          mkdir -p userpatches/overlay
+          mkdir -p cache/sources
+          mkdir -p cache/debs
+
+      - name: Copy branding overlay
+        run: |
+          cp -r ${{ github.workspace }}/branding/rootfs/* /tmp/build/armbian/userpatches/overlay/
+
+      - name: Copy custom kernel config (if exists)
+        run: |
+          if [ -f "${{ github.workspace }}/build/config/kernel-config" ]; then
+            cp ${{ github.workspace }}/build/config/kernel-config /tmp/build/armbian/userpatches/
+          fi
+
+      - name: Run Armbian build
+        run: |
+          cd /tmp/build/armbian
+          ./compile.sh \
+            BOARD=${{ env.BOARD }} \
+            RELEASE=${{ env.RELEASE }} \
+            BUILD_MINIMAL=${{ env.BUILD_MINIMAL }} \
+            BUILD_DESKTOP=${{ env.BUILD_DESKTOP }} \
+            KERNEL_CONFIGURE=no \
+            COMPRESS_OUTPUTIMAGE=xz \
+            ARTIFACT_IGNORE_CACHE=yes \
+            2>&1 | tee build.log
+
+      - name: Locate built image
+        id: image
+        run: |
+          IMAGE_PATH=$(find /tmp/build/armbian/output/images -name "*.img.xz" -type f | head -1)
+          if [ -z "$IMAGE_PATH" ]; then
+            echo "No image found in output/images"
+            exit 1
+          fi
+          echo "image_path=$IMAGE_PATH" >> $GITHUB_OUTPUT
+          echo "image_name=$(basename $IMAGE_PATH)" >> $GITHUB_OUTPUT
+
+      - name: Rename artifact
+        run: |
+          SOURCE="${{ steps.image.outputs.image_path }}"
+          DEST="/tmp/build/AVVaultOS-X96Q-H313-trixie-minimal.img.xz"
+          mv "$SOURCE" "$DEST"
+          echo "ARTIFACT_PATH=$DEST" >> $GITHUB_ENV
+
+      - name: Verify image size
+        run: |
+          ls -lh "${{ env.ARTIFACT_PATH }}"
+          FILE_SIZE=$(stat -f%z "${{ env.ARTIFACT_PATH }}" 2>/dev/null || stat -c%s "${{ env.ARTIFACT_PATH }}")
+          echo "Image size: $((FILE_SIZE / 1024 / 1024 / 1024)) GB"
+
+      - name: Upload to GitHub Release
+        if: github.event_name == 'push' || github.event.inputs.upload_artifacts == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ env.ARTIFACT_PATH }}
+          tag_name: build-${{ github.run_number }}
+          body: |
+            **AV Vault OS Build ${{ github.run_number }}**
+            
+            Board: x96q (Allwinner H313)
+            Release: Debian Trixie
+            Type: Minimal/Headless
+            
+            Commit: ${{ github.sha }}
+            
+            **Image Details:**
+            - Hostname: av-vault
+            - SSH: Enabled
+            - Branding: Applied
+            - Storage tools included
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build summary
+        if: always()
+        run: |
+          echo "=== Build Summary ==="
+          echo "Board: ${{ env.BOARD }}"
+          echo "Release: ${{ env.RELEASE }}"
+          echo "Build Type: Minimal"
+          if [ -f "/tmp/build/armbian/build.log" ]; then
+            echo ""
+            echo "=== Build Log (last 50 lines) ==="
+            tail -50 /tmp/build/armbian/build.log
+          fi
