@@ -129,7 +129,6 @@ activate_boot_branding() {
   chroot "$SQUASHFS_ROOT" update-alternatives \
     --set default.plymouth /usr/share/plymouth/themes/arcanus/arcanus.plymouth
   chroot "$SQUASHFS_ROOT" update-initramfs -u -k all
-  unmount_chroot
 
   local initrd
   initrd="$(find "$SQUASHFS_ROOT/boot" -maxdepth 1 -type f -name 'initrd.img-*' | sort | tail -1)"
