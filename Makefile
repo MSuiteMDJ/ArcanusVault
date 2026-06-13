@@ -1,45 +1,36 @@
-# AV Vault OS - Build Makefile
+# Arcanus OS Alpha - Build Makefile
 
-.PHONY: help build build-local setup clean validate install-deps
+.PHONY: help validate build apply package clean
+
+ROOTFS ?= /mnt/mint-rootfs
 
 help:
-	@echo "AV Vault OS Build System"
+	@echo "Arcanus OS Alpha"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  build              - Build locally (requires Ubuntu/Linux)"
-	@echo "  setup              - Set up build environment"
-	@echo "  install-deps       - Install build dependencies"
-	@echo "  validate           - Validate build configuration"
-	@echo "  clean              - Clean build artifacts"
-	@echo "  help               - Show this help message"
-	@echo ""
-	@echo "GitHub Actions builds automatically on push to main"
-
-build: setup
-	@echo "Starting AV Vault OS build..."
-	@chmod +x build/build-locally.sh
-	@./build/build-locally.sh
-
-setup: install-deps validate
-	@echo "Build environment ready"
-
-install-deps:
-	@echo "Installing build dependencies..."
-	@command -v git >/dev/null 2>&1 || { echo "git required"; exit 1; }
-	@command -v wget >/dev/null 2>&1 || { echo "wget required"; exit 1; }
-	@echo "Core dependencies found"
+	@echo "  validate          - Check branding scaffold"
+	@echo "  build             - Build dist/ArcanusOS-Alpha-x86_64.iso"
+	@echo "  apply ROOTFS=...  - Apply branding to a mounted Mint rootfs"
+	@echo "  package IMAGE=... - Copy/rename an image artifact into dist/"
+	@echo "  clean             - Clean generated artifacts"
 
 validate:
-	@echo "Validating configuration..."
-	@[ -d "branding/rootfs" ] || { echo "branding/rootfs missing"; exit 1; }
-	@[ -f "build/config/armbian-config.sh" ] || { echo "build config missing"; exit 1; }
-	@echo "Configuration valid"
+	@scripts/verify-setup.sh
+
+build: validate
+	@build/build-locally.sh
+
+apply:
+	@scripts/apply-branding.sh "$(ROOTFS)"
+
+package:
+	@[ -n "$(IMAGE)" ] || { echo "Usage: make package IMAGE=/path/to/image.img.xz"; exit 2; }
+	@scripts/package-artifact.sh "$(IMAGE)"
 
 clean:
-	@echo "Cleaning build artifacts..."
-	@rm -rf .build dist/*.img.xz
+	@rm -rf .build/iso dist/*.img dist/*.img.xz dist/*.iso dist/*.sha256
 	@echo "Clean complete"
 
 .DEFAULT_GOAL := help

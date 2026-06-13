@@ -1,176 +1,93 @@
-# Build Guide - AV Vault OS
+# Build Guide - Arcanus OS Alpha
 
-This document covers building a minimal AV Vault OS image for the X96Q (Allwinner H313).
+This repository builds installable Arcanus OS Alpha ISO media from Linux Mint XFCE.
 
-## Quick Start (GitHub Actions)
+## Output
 
-The build is fully automated via GitHub Actions. Push to `main` and the image will be built automatically.
+```text
+dist/ArcanusOS-Alpha-x86_64.iso
+dist/ArcanusOS-Alpha-x86_64.iso.sha256
+```
 
-**Output:** `AVVaultOS-X96Q-H313-trixie-minimal.img.xz`
+## Default Upstream
 
-Releases are uploaded to the repository's Releases page.
+Configured in `build/config/mint-alpha.conf`:
 
-## Local Build (Ubuntu/Linux only)
+```text
+Linux Mint 22.3 "Zena" XFCE 64-bit
+```
 
-To build locally:
-
-### Prerequisites
+The upstream ISO URL and checksum URL can be overridden:
 
 ```bash
-# Ubuntu/Debian
+sudo MINT_ISO_URL=https://mirror/path/linuxmint-xfce.iso \
+  MINT_SHA256_URL=https://mirror/path/sha256sum.txt \
+  build/build-iso.sh
+```
+
+## Local Build
+
+Ubuntu/Debian host dependencies:
+
+```bash
 sudo apt-get update
 sudo apt-get install -y \
-  build-essential git wget bc libncurses5-dev libssl-dev \
-  bison flex device-tree-compiler cpio xz-utils u-boot-tools \
-  python3 python3-dev dosfstools
+  ca-certificates curl gpg isolinux rsync squashfs-tools \
+  syslinux-common xorriso ripgrep
 ```
 
-### Build Steps
+Build:
 
 ```bash
-# Make scripts executable
-chmod +x build/armbian-build.sh build/build-locally.sh
-
-# Run the build
-./build/build-locally.sh
+make build
 ```
 
-The build will:
-1. Clone the Armbian repository
-2. Apply AV Vault OS branding from `branding/rootfs`
-3. Compile the minimal image
-4. Compress as `.img.xz`
-5. Place the artifact in `dist/`
-
-**Build time:** ~20-40 minutes depending on system
-
-### Build Configuration
-
-Edit `build/config/armbian-config.sh` to customize:
+or:
 
 ```bash
-BOARD="x96q"              # Target board
-RELEASE="trixie"          # Debian release
-BUILD_MINIMAL="yes"       # Minimal footprint
-BUILD_DESKTOP="no"        # No X11/desktop
+sudo build/build-iso.sh
 ```
 
-## What's Included in the Minimal Build
+Root is required because the build extracts and regenerates a Linux root filesystem with correct ownership, chroots into it, and regenerates initramfs.
 
-### System Tools
-- SSH server (enabled by default)
-- Git, curl, wget, rsync
-- SQLite3
-- Parted, lsblk, e2fsprogs
-- Timezone/locale support
+## Build Process
 
-### AV Branding
-- Hostname: `av-vault`
-- Login banner from `/etc/issue`
-- MOTD from `/etc/motd`
-- Version info at `/usr/local/share/av-vault-os/version`
+1. Download upstream Mint XFCE ISO.
+2. Verify upstream SHA256.
+3. Extract ISO contents with `xorriso`.
+4. Extract `casper/filesystem.squashfs`.
+5. Apply `branding/rootfs`.
+6. Install Arcanus wallpapers, logos, theme, Welcome, and Control Centre.
+7. Activate the Arcanus Plymouth theme in the live filesystem.
+8. Regenerate initramfs and copy it back into `casper/`.
+9. Replace visible Mint strings in boot menus, desktop launchers, and installer metadata.
+10. Regenerate filesystem manifests and squashfs.
+11. Regenerate ISO md5sums.
+12. Repack a bootable hybrid ISO.
+13. Generate SHA256 for the final ISO.
 
-### Boot Configuration
-- Serial console: `ttyS0 @ 115200`
-- Kernel: Armbian-maintained for H313
-- Bootloader: Pre-compiled for X96Q
+## Manual Overlay Debugging
 
-## Verifying the Build
-
-After build, you can inspect the image:
+Apply branding to a mounted root filesystem:
 
 ```bash
-# List contents
-xz -dc dist/AVVaultOS-X96Q-H313-trixie-minimal.img.xz | \
-  fdisk -l /dev/stdin
-
-# Decompress for flashing
-xz -d dist/AVVaultOS-X96Q-H313-trixie-minimal.img.xz
+sudo scripts/apply-branding.sh /mnt/mint-rootfs
 ```
 
-## Flashing to X96Q
-
-### On macOS
+Apply directly to a running Mint XFCE test machine:
 
 ```bash
-# Insert USB/SD card, identify device
-diskutil list
-
-# Unmount (replace diskX with actual device)
-diskutil unmountDisk diskX
-
-# Flash
-sudo dd if=AVVaultOS-X96Q-H313-trixie-minimal.img of=/dev/rdiskX bs=4m
-sudo diskutil ejectDisk diskX
+sudo scripts/apply-branding.sh /
 ```
 
-### On Linux
+## Success Criteria
 
-```bash
-# Identify device
-lsblk
+The ISO passes Alpha when the Dell boots into:
 
-# Unmount
-sudo umount /dev/sdX*
-
-# Flash (replace sdX)
-sudo dd if=AVVaultOS-X96Q-H313-trixie-minimal.img of=/dev/sdX bs=4M status=progress
-sudo sync
+```text
+ARCANUS
+ARCANUS OS
+Arcanus OS Alpha
 ```
 
-## Troubleshooting
-
-### Build Fails During Compilation
-
-Check the Armbian build log:
-
-```bash
-tail -f .build/armbian/build-output.log
-```
-
-Common issues:
-- Insufficient disk space (build needs ~30-50GB)
-- Missing dependencies (see Prerequisites)
-- Network issues pulling packages
-
-### Image Won't Boot
-
-Ensure you're flashing the **correct** device. Bad flashes require re-flashing the bootloader via USB.
-
-### SSH Connection Issues
-
-Default credentials:
-- User: `root`
-- Password: `vault` (change immediately in production)
-
-Verify SSH is running:
-
-```bash
-ssh root@av-vault
-# or
-ssh root@<ip-address>
-```
-
-## Next Steps
-
-After verifying minimal boot:
-
-1. **Level 2:** Custom boot splash/branding
-2. **Level 3:** AV Vault Launcher application
-3. **Level 4:** Desktop environment + full UI
-
-## CI/CD Pipeline
-
-The GitHub Actions workflow (`.github/workflows/build-image.yml`):
-
-- Triggers on push to `main`
-- Runs on Ubuntu runner
-- Builds minimal image
-- Uploads artifact to Releases
-- Tags with build number
-
-## References
-
-- [Armbian Documentation](https://docs.armbian.com/)
-- [X96Q Board Info](https://www.armbian.com/x96q/)
-- [Allwinner H313 Info](https://linux-sunxi.org/Allwinner_H313)
+with no visible Linux Mint branding in the normal boot, login, desktop, welcome, or about path.

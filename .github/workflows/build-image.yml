@@ -1,183 +1,104 @@
-name: Build AV Vault OS Image
+name: Build Arcanus OS Alpha ISO
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'branding/**'
-      - 'build/**'
-      - 'scripts/**'
-      - '.github/workflows/build-image.yml'
-
+      - "branding/**"
+      - "build/**"
+      - "control-centre/**"
+      - "docs/**"
+      - "scripts/**"
+      - "theme/**"
+      - "Makefile"
+      - ".github/workflows/build-image.yml"
+  pull_request:
   workflow_dispatch:
 
-env:
-  BUILD_ROOT: /tmp/build
-  ARMBIAN_DIR: /tmp/build/armbian
-
-  BOARD: x96q
-  BRANCH: current
-  RELEASE: trixie
-
-  BUILD_MINIMAL: "yes"
-  BUILD_DESKTOP: "no"
+permissions:
+  contents: write
 
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
+      - name: Verify executable scripts
+        run: |
+          chmod +x scripts/verify-setup.sh scripts/apply-branding.sh scripts/package-artifact.sh
+          chmod +x build/build-iso.sh build/build-locally.sh
+          chmod +x control-centre/arcanus-control-centre control-centre/arcanus-welcome
+
+      - name: Validate scaffold
+        run: make validate
+
+  build-iso:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ISO build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            git \
-            wget \
-            bc \
-            libncurses5-dev \
-            libssl-dev \
-            bison \
-            flex \
-            device-tree-compiler \
-            cpio \
-            xz-utils \
-            u-boot-tools \
-            qemu-user-static \
-            binfmt-support
+            ca-certificates \
+            curl \
+            gpg \
+            isolinux \
+            ripgrep \
+            rsync \
+            squashfs-tools \
+            syslinux-common \
+            xorriso
 
-      - name: Clone Armbian
+      - name: Build ISO
         run: |
-          mkdir -p "$BUILD_ROOT"
-          cd "$BUILD_ROOT"
+          chmod +x scripts/verify-setup.sh scripts/apply-branding.sh scripts/package-artifact.sh
+          chmod +x build/build-iso.sh build/build-locally.sh
+          chmod +x control-centre/arcanus-control-centre control-centre/arcanus-welcome
+          sudo build/build-iso.sh
 
-          git clone \
-            --depth=1 \
-            https://github.com/armbian/build.git \
-            armbian
-
-      - name: Verify board support
+      - name: Verify checksum
         run: |
-          cd "$ARMBIAN_DIR"
+          cd dist
+          sha256sum -c ArcanusOS-Alpha-x86_64.iso.sha256
+          ls -lh ArcanusOS-Alpha-x86_64.iso ArcanusOS-Alpha-x86_64.iso.sha256
 
-          echo "Checking board definitions..."
-
-          find config/boards -type f | grep -i x96 || true
-
-      - name: Prepare directories
-        run: |
-          mkdir -p "$ARMBIAN_DIR/userpatches/overlay"
-          mkdir -p "$ARMBIAN_DIR/cache/sources"
-          mkdir -p "$ARMBIAN_DIR/cache/debs"
-
-      - name: Copy branding
-        run: |
-          if [ -d "${{ github.workspace }}/branding/rootfs" ]; then
-            cp -r \
-              "${{ github.workspace }}/branding/rootfs/." \
-              "$ARMBIAN_DIR/userpatches/overlay/"
-          fi
-
-      - name: Copy kernel config
-        run: |
-          if [ -f "${{ github.workspace }}/build/config/kernel-config" ]; then
-            cp \
-              "${{ github.workspace }}/build/config/kernel-config" \
-              "$ARMBIAN_DIR/userpatches/"
-          fi
-
-      - name: Build image
-        run: |
-          cd "$ARMBIAN_DIR"
-
-          ./compile.sh build \
-            BOARD=${BOARD} \
-            BRANCH=${BRANCH} \
-            RELEASE=${RELEASE} \
-            BUILD_MINIMAL=${BUILD_MINIMAL} \
-            BUILD_DESKTOP=${BUILD_DESKTOP} \
-            KERNEL_CONFIGURE=no \
-            COMPRESS_OUTPUTIMAGE=xz \
-            ARTIFACT_IGNORE_CACHE=yes \
-            SHARE_LOG=yes \
-            2>&1 | tee build.log
-
-      - name: Show output directory
-        if: always()
-        run: |
-          echo "=== OUTPUT FILES ==="
-
-          find "$ARMBIAN_DIR/output" \
-            -type f \
-            | sort || true
-
-      - name: Locate image
-        id: image
-        run: |
-          IMAGE_PATH=$(find "$ARMBIAN_DIR/output" \
-            -name "*.img.xz" \
-            -type f \
-            | head -1)
-
-          if [ -z "$IMAGE_PATH" ]; then
-            echo "ERROR: No image produced"
-
-            echo ""
-            echo "=== BUILD LOG TAIL ==="
-
-            tail -100 "$ARMBIAN_DIR/build.log" || true
-
-            exit 1
-          fi
-
-          echo "image_path=$IMAGE_PATH" >> "$GITHUB_OUTPUT"
-          echo "image_name=$(basename "$IMAGE_PATH")" >> "$GITHUB_OUTPUT"
-
-      - name: Rename image
-        run: |
-          DEST="$BUILD_ROOT/AVVaultOS-X96Q-H313-trixie-minimal.img.xz"
-
-          mv \
-            "${{ steps.image.outputs.image_path }}" \
-            "$DEST"
-
-          echo "ARTIFACT_PATH=$DEST" >> "$GITHUB_ENV"
-
-      - name: Verify image
-        run: |
-          ls -lh "$ARTIFACT_PATH"
-
-      - name: Upload artifact
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AVVaultOS-X96Q-H313
-          path: ${{ env.ARTIFACT_PATH }}
+          name: ArcanusOS-Alpha-x86_64
+          path: |
+            dist/ArcanusOS-Alpha-x86_64.iso
+            dist/ArcanusOS-Alpha-x86_64.iso.sha256
+          if-no-files-found: error
 
-      - name: Create Release
-        if: github.event_name == 'push'
+      - name: Create GitHub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          files: ${{ env.ARTIFACT_PATH }}
+          tag_name: alpha-${{ github.run_number }}
+          name: Arcanus OS Alpha ${{ github.run_number }}
           prerelease: true
-          draft: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            dist/ArcanusOS-Alpha-x86_64.iso
+            dist/ArcanusOS-Alpha-x86_64.iso.sha256
+          body: |
+            Arcanus OS Alpha ISO build from commit ${{ github.sha }}.
 
-      - name: Build summary
-        if: always()
-        run: |
-          echo "BOARD=$BOARD"
-          echo "BRANCH=$BRANCH"
-          echo "RELEASE=$RELEASE"
-
-          if [ -f "$ARMBIAN_DIR/build.log" ]; then
-            echo ""
-            echo "=== LAST 100 LOG LINES ==="
-            tail -100 "$ARMBIAN_DIR/build.log"
-          fi
+            Base: Linux Mint XFCE upstream ISO
+            Output: ArcanusOS-Alpha-x86_64.iso

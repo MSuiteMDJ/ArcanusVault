@@ -1,117 +1,123 @@
-# Arcanus Vault OS
+# Arcanus OS Alpha
 
-Arcanus Vault OS is a branded, offline operating platform prototype for the X96Q H313 demo hardware. The prototype is designed to sit on top of a delivered Armbian image rather than forking Armbian or maintaining a custom kernel.
+Arcanus OS Alpha is an installable x86_64 operating system image built from Linux Mint XFCE as the upstream base.
 
-The goal is to make the image feel like a product immediately:
-
-```text
-Power On
--> ARCANUS VAULT OS
--> Desktop
--> AV Vault Launcher
-```
-
-## Prototype Scope
-
-Level 1 branding is the default target for the first image:
-
-- Hostname: `av-vault`
-- Login banner
-- MOTD
-- Wallpaper placeholder
-- Boot splash placeholder
-- Version information
-
-The first demo build identifies itself as:
+The target artifact is:
 
 ```text
-Arcanus Vault OS
-Version: Prototype 0.1
-Platform: X96Q H313
-Mode: Airgapped
+dist/
+├── ArcanusOS-Alpha-x86_64.iso
+└── ArcanusOS-Alpha-x86_64.iso.sha256
 ```
 
-## Platform Layout
+The user should download `ArcanusOS-Alpha-x86_64.iso`, flash it with Rufus, Balena Etcher, Ventoy, or `dd`, boot it, and see Arcanus branding from the boot menu through the desktop.
+
+## Milestone
+
+The Alpha milestone is deliberately narrow:
 
 ```text
-Platform
-└─ AV Vault OS
-
-Applications
-├─ AV Ledger
-├─ AV Records
-├─ AV Assets
-└─ AV Evidence
+Power on
+-> ARCANUS boot splash
+-> ARCANUS OS login
+-> Branded XFCE desktop
+-> Arcanus Welcome / Control Centre
 ```
 
-## Branding Overlay
+If someone sits down in front of the Dell OptiPlex and asks what operating system it is, the answer should be:
 
-The repo contains a root filesystem overlay in `branding/rootfs` and an installer script:
+```text
+Arcanus OS
+```
+
+Linux Mint is the engine. Arcanus is the operating system experience.
+
+## Base System
+
+Default upstream ISO:
+
+```text
+Linux Mint 22.3 "Zena" XFCE 64-bit
+```
+
+The URL is configured in [build/config/mint-alpha.conf](</Volumes/MacMiniDock/Arcanus Vault OS/build/config/mint-alpha.conf>) and can be overridden with `MINT_ISO_URL` and `MINT_SHA256_URL`.
+
+## Build
 
 ```bash
-sudo scripts/apply-branding.sh /mnt/armbian-rootfs
+make build
 ```
 
-The script writes the prototype hostname, MOTD, login banner, version file, and a lightweight terminal launcher command without changing the kernel or Armbian build system.
-
-After applying the overlay, this should work inside the image:
+or:
 
 ```bash
-cat /etc/motd
-av-vault-launcher
+sudo build/build-iso.sh
 ```
 
-## Build Artifacts
+The build process:
 
-Longer term, the pipeline should emit branded artifact names:
+1. Downloads the upstream Mint XFCE ISO.
+2. Verifies its SHA256 checksum.
+3. Extracts the ISO and live filesystem.
+4. Applies the Arcanus root filesystem overlay.
+5. Activates the Arcanus Plymouth boot theme.
+6. Rebrands LightDM, XFCE defaults, wallpaper, theme, welcome, and control centre.
+7. Rewrites visible ISO boot menu strings.
+8. Regenerates initramfs, squashfs, manifests, and md5sums.
+9. Rebuilds a bootable hybrid ISO.
+10. Writes the release SHA256 checksum.
 
-```text
-AVVaultOS-X96Q.img.xz
-AVVaultOS-Intel.img.xz
-AVVaultOS-RPi5.img.xz
-```
-
-The current prototype target is:
-
-```text
-AVVaultOS-X96Q-Prototype-0.1.img.xz
-```
-
-## Build System
-
-The build uses **Armbian as the base** with AV Vault OS customizations layered on top. No custom kernel compilation needed.
-
-### Quick Build (GitHub Actions)
-
-Builds trigger automatically on push to `main`. Artifacts are released as:
-
-```text
-AVVaultOS-X96Q-H313-trixie-minimal.img.xz
-```
-
-### Local Build (Linux/Ubuntu)
+## Validate
 
 ```bash
-chmod +x build/build-locally.sh
-./build/build-locally.sh
+make validate
 ```
 
-See [BUILD.md](docs/BUILD.md) for detailed instructions, flashing guides, and troubleshooting.
+## Apply Overlay Manually
 
-### Build Phases
+For debugging a mounted Mint root filesystem:
 
-The project follows a four-phase progression:
+```bash
+sudo scripts/apply-branding.sh /mnt/mint-rootfs
+```
 
-1. **Phase 1 (Now):** Minimal bootable image with AV branding
-2. **Phase 2:** Custom boot splash screen
-3. **Phase 3:** AV Vault Launcher application
-4. **Phase 4:** Multi-platform CI/CD
+For a running Mint XFCE test install:
 
-See [BUILD_PHASES.md](docs/BUILD_PHASES.md) for the detailed roadmap.
+```bash
+sudo scripts/apply-branding.sh /
+```
 
-## Roadmap
+The ISO builder uses the same branding layer.
 
-- Phase 1: Simple branding overlay → minimal bootable image
-- Phase 2: Replace Armbian boot text with Arcanus Vault OS branding
-- Phase 3: Desktop login launches AV Vault Launcher
-- Phase 4: GitHub Actions pipeline with multi-platform support
+## Project Layout
+
+```text
+branding/
+├── boot/
+├── login/
+├── wallpapers/
+├── icons/
+├── logos/
+└── rootfs/
+
+theme/
+└── Arcanus-Dark/
+
+control-centre/
+
+build/
+├── build-iso.sh
+├── build-locally.sh
+├── config/
+└── mint/
+
+docs/
+```
+
+## Deferred
+
+- Product applications
+- Deeper platform integrations
+- Full icon redesign
+
+Mint icons stay in place for Alpha.

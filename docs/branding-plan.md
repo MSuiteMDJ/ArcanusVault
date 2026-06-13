@@ -1,54 +1,57 @@
-# AV Vault OS Branding Plan
+# Arcanus OS Alpha Branding Plan
 
-## Level 1 - Simple Branding
-
-Level 1 brands the delivered image without changing the kernel or forking Armbian.
-
-- Hostname: `av-vault`
-- Login banner: `/etc/issue`
-- MOTD: `/etc/motd`
-- Version information: `/usr/local/share/av-vault-os/version`
-- Launcher command: `/usr/local/bin/av-vault-launcher`
-- Wallpaper and boot splash placeholders for later image-specific work
-
-## Level 2 - Custom Boot Screen
-
-Replace visible `Armbian` boot branding with `Arcanus Vault OS` where the target image exposes splash assets or boot text configuration.
-
-The demo boot story should read:
+## Test Question
 
 ```text
-Power On
--> ARCANUS VAULT OS
+What operating system is this?
 ```
 
-## Level 3 - AV Launcher
-
-On desktop login, launch the AV Vault Launcher with:
+Expected answer:
 
 ```text
-Open AV Ledger
-Open AV Records
-Open AV Assets
-Open AV Evidence
-Settings
-Shutdown
+Arcanus OS
 ```
 
-The prototype includes a terminal launcher stub so the product flow is visible before the desktop application exists.
+## ISO Identity Surfaces
 
-## Level 4 - Build Pipeline Branding
+The install media must show Arcanus branding across:
 
-GitHub Actions should package image artifacts as:
+- ISO boot menu
+- Plymouth boot splash
+- Live desktop wallpaper
+- Installer-visible launchers
+- Installed system `/etc/os-release`
+- Login screen
+- Desktop theme
+- Welcome flow
+- Control Centre
+
+## Palette
+
+```css
+Primary Purple: #854CFF
+Dark Purple:    #4E2D9E
+Background:     #050510
+Text:           #FFFFFF
+Accent:         #CFC3FF
+```
+
+Mint icons remain in place for Alpha.
+
+## Welcome Copy
 
 ```text
-AVVaultOS-X96Q.img.xz
-AVVaultOS-Intel.img.xz
-AVVaultOS-RPi5.img.xz
+Welcome to Arcanus OS
+
+Secure.
+Private.
+Independent.
+
+Your Software.
+Your Data.
+Your Future.
 ```
 
-For the current prototype:
+## Scope
 
-```text
-AVVaultOS-X96Q-Prototype-0.1.img.xz
-```
+Product applications and deeper platform integrations are out of scope until the ISO identity test passes on the Dell.

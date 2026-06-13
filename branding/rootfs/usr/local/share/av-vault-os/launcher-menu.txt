@@ -1,8 +1,0 @@
-AV Vault Launcher
-
-1. Open AV Ledger
-2. Open AV Records
-3. Open AV Assets
-4. Open AV Evidence
-5. Settings
-6. Shutdown
